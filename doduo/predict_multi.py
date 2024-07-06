@@ -61,13 +61,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     
-    wandb.init(config=args,
-            project="TableUnderstanding",
-            name=f"test",
-            group="TU",
-            )
+    # wandb.init(config=args,
+    #         project="TableUnderstanding",
+    #         name=f"test",
+    #         group="TU",
+    #         )
     # ============
-    tag_name = "/data/zhihao/TU/doduo/model/msato0_mosato_bert_bert-base-uncased-bs16-ml-32__msato0-1.00"
+    tag_name = "/data/zhihao/TU/doduo/model/sato0_mosato_bert_bert-base-uncased-bs16-ml-32__sato0-1.00"
     # tag_name = sys.argv[1]
     multicol_only = False
     shortcut_name, _, max_length = parse_tagname(tag_name)
@@ -135,11 +135,13 @@ if __name__ == "__main__":
         if len(tasks) == 1:
             f1_macro_model_path = "{}_best_macro_f1.pt".format(tag_name)
             f1_micro_model_path = "{}_best_micro_f1.pt".format(tag_name)
+            loss_model_path = "{}_best_loss.pt".format(tag_name)
         else:
             f1_macro_model_path = "{}={}_best_macro_f1.pt".format(
                 tag_name, task)
             f1_micro_model_path = "{}={}_best_micro_f1.pt".format(
                 tag_name, task)
+            loss_model_path = "{}={}_best_loss.pt".format(tag_name, task)
         # ============
 
         tokenizer = BertTokenizer.from_pretrained(shortcut_name)
@@ -225,8 +227,7 @@ if __name__ == "__main__":
             raise ValueError()
 
         eval_dict = defaultdict(dict)
-        for f1_name, model_path in [("f1_macro", f1_macro_model_path),
-                                    ("f1_micro", f1_micro_model_path)]:
+        for f1_name, model_path in [("loss", loss_model_path)]:
             model.load_state_dict(torch.load(model_path, map_location=device))
             ts_pred_list = []
             ts_true_list = []
@@ -306,13 +307,15 @@ if __name__ == "__main__":
             if type(ts_conf_mat) != list:
                 ts_conf_mat = ts_conf_mat.tolist()
             eval_dict[f1_name]["confusion_matrix"] = ts_conf_mat
-            wandb.log({
-                f"{task}_test/{f1_name}-micro_f1": ts_micro_f1,
-                f"{task}_test/{f1_name}-macro_f1": ts_macro_f1,
-            })
-            log_confusion_matrix(ts_conf_mat, class_names=sato_coltypes if "sato" in task else None, title=f"{task}_table/{f1_name}-confusion_matrix")
-            log_class_f1(ts_class_f1, class_names=sato_coltypes if "sato" in task else None, title=f"{task}_table/{f1_name}-class_f1")
+            eval_dict[f1_name]["true_list"] = ts_true_list
+            eval_dict[f1_name]["pred_list"] = ts_pred_list
+            # wandb.log({
+            #     f"{task}_test/{f1_name}-micro_f1": ts_micro_f1,
+            #     f"{task}_test/{f1_name}-macro_f1": ts_macro_f1,
+            # })
+            # log_confusion_matrix(ts_conf_mat, class_names=sato_coltypes if "sato" in task else None, title=f"{task}_table/{f1_name}-confusion_matrix")
+            # log_class_f1(ts_class_f1, class_names=sato_coltypes if "sato" in task else None, title=f"{task}_table/{f1_name}-class_f1")
         with open(output_filepath, "w") as fout:
             json.dump(eval_dict, fout)
             
-    wandb.finish()
+    # wandb.finish()
