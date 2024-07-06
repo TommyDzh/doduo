@@ -4,6 +4,65 @@ import numpy as np
 from sklearn.metrics import multilabel_confusion_matrix
 import torch
 
+import wandb
+from typing import Optional, Sequence
+def log_confusion_matrix(conf_mat, class_names: Sequence = None , title: str = None, split_table: bool = False):
+    assert len(conf_mat) == len(class_names), "Higher predicted index than number of classes"
+    assert len(conf_mat) == len(conf_mat[0]), "Inequal number of rows and columns"
+    n_classes = len(class_names)
+    class_inds = [i for i in range(n_classes)]
+    if class_names is None:
+        class_names = [f"Class_{i}" for i in range(1, n_classes + 1)]
+
+    # get mapping of inds to class index in case user has weird prediction indices
+    class_mapping = {}
+    for i, val in enumerate(sorted(list(class_inds))):
+        class_mapping[val] = i
+    data = []
+    for i in range(n_classes):
+        for j in range(n_classes):
+            data.append([class_names[i], class_names[j], conf_mat[i][j]])
+
+    fields = {
+        "Actual": "Actual",
+        "Predicted": "Predicted",
+        "nPredictions": "nPredictions",
+    }
+    title = title or ""
+    table = wandb.Table(columns=["Actual", "Predicted", "nPredictions"], data=data)
+    wandb.log({title: table})
+    # wandb.log({f"{title}_plot":
+    # wandb.plot_table(
+    #     "wandb/confusion_matrix/v1",
+    #     table,
+    #     fields,
+    #     {"title": title},
+    #     split_table=split_table,
+    # )})
+
+def log_class_f1(ts_class_f1, class_names: Sequence = None , title: str = None, split_table: bool = False):
+    assert len(ts_class_f1) == len(class_names), "Higher predicted index than number of classes"
+    n_classes = len(class_names)
+    class_inds = [i for i in range(n_classes)]
+    if class_names is None:
+        class_names = [f"Class_{i}" for i in range(1, n_classes + 1)]
+
+    # get mapping of inds to class index in case user has weird prediction indices
+    class_mapping = {}
+    for i, val in enumerate(sorted(list(class_inds))):
+        class_mapping[val] = i
+    data = []
+    for i in range(n_classes):
+        data.append([class_names[i],ts_class_f1[i]])
+            
+    fields = {
+        "Actual": "Actual",
+        "Predicted": "Predicted",
+        "nPredictions": "nPredictions",
+    }
+    title = title or ""
+    table = wandb.Table(columns=["Class", "F1"], data=data)
+    wandb.log({title: table})
 
 def f1_score_multilabel(true_list, pred_list):
     conf_mat = multilabel_confusion_matrix(np.array(true_list),

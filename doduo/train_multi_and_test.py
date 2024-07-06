@@ -8,7 +8,8 @@ from time import time
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import f1_score
+from sklearn.metrics import confusion_matrix, f1_score
+
 import torch
 from torch.nn import CrossEntropyLoss, BCEWithLogitsLoss
 from torch.utils.data import DataLoader, RandomSampler
@@ -26,7 +27,8 @@ from dataset import (
 )
 
 from model import BertForMultiOutputClassification, BertMultiPairPooler
-from util import f1_score_multilabel
+from util import f1_score_multilabel, parse_tagname, f1_score_multilabel, log_confusion_matrix, log_class_f1
+
 
 import wandb
 
@@ -35,6 +37,18 @@ def set_seed(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
 
+
+sato_coltypes = ["address", "affiliate", "affiliation", "age", "album", "area",
+                 "artist", "birthDate", "birthPlace", "brand", "capacity", "category",
+                 "city", "class", "classification", "club", "code", "collection", "command",
+                 "company", "component", "continent", "country", "county", "creator", "credit",
+                 "currency", "day", "depth", "description", "director", "duration", "education",
+                 "elevation", "family", "fileSize", "format", "gender", "genre", "grades", "isbn",
+                 "industry", "jockey", "language", "location", "manufacturer", "name", "nationality",
+                 "notes", "operator", "order", "organisation", "origin", "owner", "person", "plays",
+                 "position", "product", "publisher", "range", "rank", "ranking", "region", "religion",
+                 "requirement", "result", "sales", "service", "sex", "species", "state", "status",
+                 "symbol", "team", "teamName", "type", "weight", "year"]
 
 if __name__ == "__main__":
     
@@ -145,16 +159,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
     args.tasks = sorted(args.tasks)
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
-    if "msato" in args.tasks[0]:
-        dataset_name = "msato"
-    elif "sato" in args.tasks[0]:
-        dataset_name = "sato"
-    elif "turl-re" in args.tasks[0]:
-        dataset_name = "turl-re"
-    elif "turl" in args.tasks[0]:
-        dataset_name = "turl"
-    else:
-        raise ValueError("Invalid task name: {}".format(args.tasks[0]))
+
+    assert len(args.tasks) == 1, "Only single task is supported"
+    dataset_name = args.tasks[0]
+
     wandb.init(config=args,
             project="TableUnderstanding",
             name=f"{args.model}_DS@{dataset_name}_SINGLE@{args.single_col}",
@@ -663,19 +671,272 @@ if __name__ == "__main__":
                 .format(vl_loss, vl_macro_f1, vl_micro_f1, epoch_time))
             
             wandb.log({
-                f"{task}_train/loss": tr_loss,
-                f"{task}_train/macro_f1": tr_macro_f1,
-                f"{task}_train/micro_f1": tr_micro_f1,
-                f"{task}_valid/loss": vl_loss,
-                f"{task}_valid/macro_f1": vl_macro_f1,
-                f"{task}_valid/micro_f1": vl_micro_f1,
-                f"{task}_train/time": epoch_time,
+                f"train/loss": tr_loss,
+                f"train/macro_f1": tr_macro_f1,
+                f"train/micro_f1": tr_micro_f1,
+                f"valid/loss": vl_loss,
+                f"valid/macro_f1": vl_macro_f1,
+                f"valid/micro_f1": vl_micro_f1,
+                f"train/time": epoch_time,
             }, step=epoch+1, commit=True)
     # log average time
     for k, time_info_list in enumerate(time_info_lists):
         avg_time = np.mean(time_info_list)
         print("Average time for {}: {:.2f} sec.".format(args.tasks[k], avg_time))
-        wandb.log({f"{args.tasks[k]}_train/avg_time": avg_time}, commit=True)
+        wandb.log({f"train/avg_time": avg_time}, commit=True)
+        
+
+    # ======================Evaluation======================
+
+    multicol_only = False
+    shortcut_name, _, max_length = parse_tagname(tag_name)
+
+    colpair = False
+
+    # Single-column or multi-column
+    if os.path.basename(tag_name).split("_")[1] == "single":
+        single_col = True
+    else:
+        single_col = False
+
+    # Task names
+    task = os.path.basename(tag_name).split("_")[0]
+    num_classes_list = []
+    if task == "turl":
+        tasks = ["turl"]
+        num_classes_list.append(255)
+    elif task == "turl-re" or task == "turl-re-colpair":  # turl-re or turl-re-colpair
+        tasks = ["turl-re"]
+        num_classes_list.append(121)
+        if task == "turl-re-colpair":
+            colpair = True
+    elif task in [
+            "sato0", "sato1", "sato2", "sato3", "sato4", "msato0", "msato1",
+            "msato2", "msato3", "msato4"
+    ]:
+        if task[0] == "m":
+            multicol_only = True
+        tasks = [task]  # sato, sato0 , ...
+        num_classes_list.append(78)
+    elif task == "turlturl-re":
+        tasks = ["turl", "turl-re"]
+        num_classes_list.append(255)
+        num_classes_list.append(121)
+    elif task == "turlturl-re-colpair":
+        tasks = ["turl", "turl-re"]
+        num_classes_list.append(255)
+        num_classes_list.append(121)
+        colpair = True
+    elif task == "satoturl":
+        tasks = ["sato", "turl"]
+        num_classes_list.append(78)
+        num_classes_list.append(121)
+    elif task == "satoturlturl-re":
+        tasks = ["sato", "turl", "turl-re"]
+        num_classes_list.append(78)
+        num_classes_list.append(121)
+        num_classes_list.append(255)
+    else:
+        raise ValueError("Invalid task name(s): {}".format(tag_name))
+
+    for task, num_classes in zip(tasks, num_classes_list):
+        #output_filepath = "{}.json".format(tag_name.replace("model/", "eval/"))
+        output_filepath = "{}={}.json".format(
+            tag_name.replace("model/", "eval/"), task)
+        output_dirpath = os.path.dirname(output_filepath)
+        if not os.path.exists(output_dirpath):
+            print("{} not exist. Created.".format(output_dirpath))
+            os.makedirs(output_dirpath)
+
+        #max_length = int(tag_name.split("-")[-1])
+        #batch_size = 32
+        batch_size = 16
+        if len(tasks) == 1:
+            f1_macro_model_path = "{}_best_macro_f1.pt".format(tag_name)
+            f1_micro_model_path = "{}_best_micro_f1.pt".format(tag_name)
+            loss_model_path = "{}_best_loss.pt".format(tag_name)
+        else:
+            f1_macro_model_path = "{}={}_best_macro_f1.pt".format(
+                tag_name, task)
+            f1_micro_model_path = "{}={}_best_micro_f1.pt".format(
+                tag_name, task)
+            loss_model_path = "{}={}_best_loss.pt".format(tag_name, task)
+        # ============
+
+        tokenizer = BertTokenizer.from_pretrained(shortcut_name)
+
+        # WIP
+        if single_col:
+            model_config = BertConfig.from_pretrained(shortcut_name,
+                                                      num_labels=num_classes)
+            model = BertForSequenceClassification(model_config).to(device)
+        else:
+            model = BertForMultiOutputClassification.from_pretrained(
+                shortcut_name,
+                num_labels=num_classes,
+                output_attentions=False,
+                output_hidden_states=False,
+            ).to(device)
+
+        if task == "turl-re" and colpair:
+            print("Use column-pair pooling")
+            # Use column pair embeddings
+            config = BertConfig.from_pretrained(shortcut_name)
+            model.bert.pooler = BertMultiPairPooler(config).to(device)
+
+        if task in [
+                "sato0", "sato1", "sato2", "sato3", "sato4", "msato0",
+                "msato1", "msato2", "msato3", "msato4"
+        ]:
+            if task[0] == "m":
+                multicol_only = True
+            else:
+                multicol_only = False
+
+            cv = int(task[-1])
+            if single_col:
+                dataset_cls = SatoCVColwiseDataset
+            else:
+                dataset_cls = SatoCVTablewiseDataset
+            base_dirpath = os.path.join(args.file_path, "data")
+            test_dataset = dataset_cls(cv=cv,
+                                       split="test",
+                                       tokenizer=tokenizer,
+                                       max_length=max_length,
+                                       multicol_only=multicol_only,
+                                       device=device,
+                                       base_dirpath=base_dirpath
+                                       )
+            test_dataloader = DataLoader(test_dataset,
+                                         batch_size=batch_size,
+                                         collate_fn=collate_fn)
+        elif "turl" in task:
+            if task in ["turl"]:
+                filepath = "data/table_col_type_serialized.pkl"
+            elif "turl-re" in task:  # turl-re-colpair
+                filepath = "data/table_rel_extraction_serialized.pkl"
+            else:
+                raise ValueError("turl tasks must be turl or turl-re.")
+
+            if single_col:
+                if task == "turl":
+                    dataset_cls = TURLColTypeColwiseDataset
+                elif task == "turl-re":
+                    dataset_cls = TURLRelExtColwiseDataset
+                else:
+                    raise ValueError()
+            else:
+                if task == "turl":
+                    dataset_cls = TURLColTypeTablewiseDataset
+                elif task == "turl-re":
+                    dataset_cls = TURLRelExtTablewiseDataset
+                else:
+                    raise ValueError()
+
+            test_dataset = dataset_cls(filepath=filepath,
+                                       split="test",
+                                       tokenizer=tokenizer,
+                                       max_length=max_length,
+                                       multicol_only=False,
+                                       device=device)
+            test_dataloader = DataLoader(test_dataset,
+                                         batch_size=batch_size,
+                                         collate_fn=collate_fn)
+        else:
+            raise ValueError()
+
+        eval_dict = defaultdict(dict)
+        for f1_name, model_path in [("f1_macro", f1_macro_model_path),
+                                    ("f1_micro", f1_micro_model_path),
+                                    ("loss", loss_model_path)]:
+            model.load_state_dict(torch.load(model_path, map_location=device))
+            ts_pred_list = []
+            ts_true_list = []
+            # Test
+            for batch_idx, batch in enumerate(test_dataloader):
+                if single_col:
+                    # Single-column
+                    logits = model(batch["data"].T).logits
+                    if "sato" in task:
+                        ts_pred_list += logits.argmax(
+                            1).cpu().detach().numpy().tolist()
+                        ts_true_list += batch["label"].cpu().detach().numpy(
+                        ).tolist()
+                    elif "turl" in task:
+                        ts_pred_list += (logits >= math.log(0.5)
+                                         ).int().detach().cpu().tolist()
+                        ts_true_list += batch["label"].cpu().detach().numpy(
+                        ).tolist()
+                    else:
+                        raise ValueError(
+                            "Invalid task for single-col: {}".format(task))
+                else:
+                    # Multi-column
+                    logits, = model(batch["data"].T)
+                    if len(logits.shape) == 2:
+                        logits = logits.unsqueeze(0)
+                    cls_indexes = torch.nonzero(
+                        batch["data"].T == tokenizer.cls_token_id)
+                    filtered_logits = torch.zeros(cls_indexes.shape[0],
+                                                  logits.shape[2]).to(device)
+                    for n in range(cls_indexes.shape[0]):
+                        i, j = cls_indexes[n]
+                        logit_n = logits[i, j, :]
+                        filtered_logits[n] = logit_n
+                    if "sato" in task:
+                        ts_pred_list += filtered_logits.argmax(
+                            1).cpu().detach().numpy().tolist()
+                        ts_true_list += batch["label"].cpu().detach().numpy(
+                        ).tolist()
+                    elif "turl" in task:
+                        if "turl-re" in task:  # turl-re-colpair
+                            all_preds = (filtered_logits >= math.log(0.5)
+                                         ).int().detach().cpu().numpy()
+                            all_labels = batch["label"].cpu().detach().numpy()
+                            idxes = np.where(all_labels > 0)[0]
+                            ts_pred_list += all_preds[idxes, :].tolist()
+                            ts_true_list += all_labels[idxes, :].tolist()
+                        elif task == "turl":
+                            ts_pred_list += (filtered_logits >= math.log(0.5)
+                                             ).int().detach().cpu().tolist()
+                            ts_true_list += batch["label"].cpu().detach(
+                            ).numpy().tolist()
+
+            if "sato" in task:
+                ts_micro_f1 = f1_score(ts_true_list,
+                                       ts_pred_list,
+                                       average="micro")
+                ts_macro_f1 = f1_score(ts_true_list,
+                                       ts_pred_list,
+                                       average="macro")
+                ts_class_f1 = f1_score(ts_true_list,
+                                       ts_pred_list,
+                                       average=None,
+                                       labels=np.arange(78))
+                ts_conf_mat = confusion_matrix(ts_true_list,
+                                               ts_pred_list,
+                                               labels=np.arange(78))
+            elif "turl" in task:
+                ts_micro_f1, ts_macro_f1, ts_class_f1, ts_conf_mat = f1_score_multilabel(
+                    ts_true_list, ts_pred_list)
+
+            eval_dict[f1_name]["ts_micro_f1"] = ts_micro_f1
+            eval_dict[f1_name]["ts_macro_f1"] = ts_macro_f1
+            if type(ts_class_f1) != list:
+                ts_class_f1 = ts_class_f1.tolist()
+            eval_dict[f1_name]["ts_class_f1"] = ts_class_f1
+            if type(ts_conf_mat) != list:
+                ts_conf_mat = ts_conf_mat.tolist()
+            eval_dict[f1_name]["confusion_matrix"] = ts_conf_mat
+            wandb.log({
+                f"test/{f1_name}:micro_f1": ts_micro_f1,
+                f"test/{f1_name}:macro_f1": ts_macro_f1,
+            })
+            log_confusion_matrix(ts_conf_mat, class_names=sato_coltypes if "sato" in task else None, title=f"table/{f1_name}:confusion_matrix")
+            log_class_f1(ts_class_f1, class_names=sato_coltypes if "sato" in task else None, title=f"table/{f1_name}:class_f1")
+        with open(output_filepath, "w") as fout:
+            json.dump(eval_dict, fout)
+
     wandb.finish()
     # for task, loss_info_list in zip(args.tasks, loss_info_lists):
     #     loss_info_df = pd.DataFrame(loss_info_list,

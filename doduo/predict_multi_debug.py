@@ -39,7 +39,6 @@ sato_coltypes = ["address", "affiliate", "affiliation", "age", "album", "area",
                  "requirement", "result", "sales", "service", "sex", "species", "state", "status",
                  "symbol", "team", "teamName", "type", "weight", "year"]
 
-import wandb
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # local experimental settings
@@ -61,11 +60,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     
-    wandb.init(config=args,
-            project="TableUnderstanding",
-            name=f"test",
-            group="TU",
-            )
+
     # ============
     tag_name = "/data/zhihao/TU/doduo/model/msato0_mosato_bert_bert-base-uncased-bs16-ml-32__msato0-1.00"
     # tag_name = sys.argv[1]
@@ -179,7 +174,7 @@ if __name__ == "__main__":
                 dataset_cls = SatoCVTablewiseDataset
             base_dirpath = os.path.join(args.file_path, "data")
             test_dataset = dataset_cls(cv=cv,
-                                       split="test",
+                                       split="test", 
                                        tokenizer=tokenizer,
                                        max_length=max_length,
                                        multicol_only=multicol_only,
@@ -225,6 +220,7 @@ if __name__ == "__main__":
             raise ValueError()
 
         eval_dict = defaultdict(dict)
+        length = []
         for f1_name, model_path in [("f1_macro", f1_macro_model_path),
                                     ("f1_micro", f1_micro_model_path)]:
             model.load_state_dict(torch.load(model_path, map_location=device))
@@ -232,6 +228,9 @@ if __name__ == "__main__":
             ts_true_list = []
             # Test
             for batch_idx, batch in enumerate(test_dataloader):
+                if batch["data"].T.shape[1] > 512:
+                    print("Too long")
+                length.append(batch["data"].T.shape[1])
                 if single_col:
                     # Single-column
                     logits = model(batch["data"].T).logits
@@ -306,13 +305,11 @@ if __name__ == "__main__":
             if type(ts_conf_mat) != list:
                 ts_conf_mat = ts_conf_mat.tolist()
             eval_dict[f1_name]["confusion_matrix"] = ts_conf_mat
-            wandb.log({
-                f"{task}_test/{f1_name}-micro_f1": ts_micro_f1,
-                f"{task}_test/{f1_name}-macro_f1": ts_macro_f1,
-            })
-            log_confusion_matrix(ts_conf_mat, class_names=sato_coltypes if "sato" in task else None, title=f"{task}_table/{f1_name}-confusion_matrix")
-            log_class_f1(ts_class_f1, class_names=sato_coltypes if "sato" in task else None, title=f"{task}_table/{f1_name}-class_f1")
+
+            # log_confusion_matrix(ts_conf_mat, class_names=sato_coltypes if "sato" in task else None, title=f"{task}_table/{f1_name}-confusion_matrix")
+            # log_class_f1(ts_class_f1, class_names=sato_coltypes if "sato" in task else None, title=f"{task}_table/{f1_name}-class_f1")
         with open(output_filepath, "w") as fout:
             json.dump(eval_dict, fout)
+        print(max(length))
             
-    wandb.finish()
+

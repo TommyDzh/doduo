@@ -48,7 +48,7 @@ def load_filtered(fileName):
 
 
 if __name__ == "__main__":
-    """
+
     for cv in tqdm(range(5)):
         data_list = []
         for corpus in ["webtables1", "webtables2"]:
@@ -66,7 +66,7 @@ if __name__ == "__main__":
                                           " ".join([str(x) for x in df.iloc[:, i].dropna().tolist()])])
         df = pd.DataFrame(data_list, columns=["table_id", "col_idx", "class", "class_id", "data"])
         df.to_csv("data/sato_cv_{}.csv".format(cv), index=False)
-    """
+
 
     for cv in tqdm(range(5)):
         data_list = []

@@ -28,7 +28,7 @@ from dataset import (
 from model import BertForMultiOutputClassification, BertMultiPairPooler
 from util import f1_score_multilabel
 
-import wandb
+
 
 def set_seed(seed):
     random.seed(seed)
@@ -155,11 +155,7 @@ if __name__ == "__main__":
         dataset_name = "turl"
     else:
         raise ValueError("Invalid task name: {}".format(args.tasks[0]))
-    wandb.init(config=args,
-            project="TableUnderstanding",
-            name=f"{args.model}_DS@{dataset_name}_SINGLE@{args.single_col}",
-            group="TU",
-            )
+
     
     
     
@@ -231,7 +227,6 @@ if __name__ == "__main__":
     # TODO: Check
     tag_name += "__{}".format("_".join(train_ratio_str_list))
     tag_name = os.path.join(args.file_path, tag_name)
-    wandb.log({"tag_name": tag_name})
     print(tag_name)
 
     dirpath = os.path.dirname(tag_name)
@@ -662,21 +657,7 @@ if __name__ == "__main__":
                 "vl_loss={:.7f} vl_macro_f1={:.4f} vl_micro_f1={:.4f} ({:.2f} sec.)"
                 .format(vl_loss, vl_macro_f1, vl_micro_f1, epoch_time))
             
-            wandb.log({
-                f"{task}_train/loss": tr_loss,
-                f"{task}_train/macro_f1": tr_macro_f1,
-                f"{task}_train/micro_f1": tr_micro_f1,
-                f"{task}_valid/loss": vl_loss,
-                f"{task}_valid/macro_f1": vl_macro_f1,
-                f"{task}_valid/micro_f1": vl_micro_f1,
-                f"{task}_train/time": epoch_time,
-            }, step=epoch+1, commit=True)
-    # log average time
-    for k, time_info_list in enumerate(time_info_lists):
-        avg_time = np.mean(time_info_list)
-        print("Average time for {}: {:.2f} sec.".format(args.tasks[k], avg_time))
-        wandb.log({f"{args.tasks[k]}_train/avg_time": avg_time}, commit=True)
-    wandb.finish()
+
     # for task, loss_info_list in zip(args.tasks, loss_info_lists):
     #     loss_info_df = pd.DataFrame(loss_info_list,
     #                                 columns=[

@@ -26,6 +26,7 @@ from torch.nn import CrossEntropyLoss, MSELoss
 import transformers
 from transformers import BertPreTrainedModel
 
+
 if version.parse(transformers.__version__) < version.parse("4.1.1"):
     from transformers.modeling_bert import BertEmbeddings, BertEncoder
 else:
