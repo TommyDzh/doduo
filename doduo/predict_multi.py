@@ -52,14 +52,14 @@ if __name__ == "__main__":
     
     parser.add_argument(
         "--device",
-        default=1,
+        default=0,
         type=int,
         help="which gpu to use",
     )   
     
     
     args = parser.parse_args()
-    device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+    device = torch.device(args.device if args.device>-1 else 'cpu')
     
     # wandb.init(config=args,
     #         project="TableUnderstanding",
